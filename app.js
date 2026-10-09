@@ -443,7 +443,7 @@
       <div class="dhead"><button class="back" data-act="back" aria-label="Назад">‹</button>${ava(t, true)}
         <div><h1>${esc(k.name)}</h1><div class="sub">${t} · ${esc(k.sector)}${k.rank ? ' · №' + k.rank + ' в рейтинге' : ''}</div></div></div>
       <div class="bigprice"><b id="dPrice">${fmt(last, k.dec)} ₽</b><span id="dChg" class="${cls(chg)}">${pct(chg, 2)} за день</span></div>
-      <div class="banner ${k.bucket}">${banner}${st ? '<div style="margin-top:8px">' + st + '</div>' : ''}</div>
+      <div class="banner ${k.bucket}">${banner}${k.why ? '<div style="margin-top:6px">Почему: ' + esc(k.why) + '.</div>' : ''}${st ? '<div style="margin-top:8px">' + st + '</div>' : ''}</div>
       <div class="card chartcard">
         <div class="chartbar"><span class="small">Дневные свечи</span><div class="seg mini">${[[63, '3М'], [126, '6М'], [250, '1Г']].map(x => `<button data-range="${x[0]}" class="${S.range === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div></div>
         <canvas id="chart" aria-label="График ${esc(t)}"></canvas><div class="tip" id="tip"></div>
