@@ -265,4 +265,10 @@ details[open] summary::after { transform: rotate(90deg); }
   transform: translateX(-50%) translateY(16px); transition: opacity .25s, transform .25s; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 @media (min-width: 700px) { .hero h1 { font-size: 32px; } }
+@media (max-width: 360px) {          /* маленькие телефоны: место под условие сценария важнее спарклайна */
+  .lrow .spark { display: none; }
+  .kv { gap: 12px 10px; }
+  .hero h1 { font-size: 26px; }
+  .tile b { font-size: 24px; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
