@@ -96,10 +96,13 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       S.d = await r.json();
       render();
-      const m = /#t=([A-Z0-9]+)/.exec(location.hash) || /^t_([A-Z0-9]+)$/.exec((tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || '');
-      if (m && S.d.tickers[m[1]]) openDetail(m[1], true);
-      const tab = /#tab=(\w+)/.exec(location.hash);
-      if (tab && VIEWS[tab[1]]) setTab(tab[1], true);
+      // Открыть сразу бумагу или раздел: ?t=LKOH (кнопка в чате), #t=LKOH, startapp=t_LKOH; ?tab=cal
+      const q = new URLSearchParams(location.search);
+      const sp = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || '';
+      const t0 = q.get('t') || (/[#&]t=([A-Z0-9]+)/.exec(location.hash) || [])[1] || (/^t_([A-Z0-9]+)$/.exec(sp) || [])[1];
+      const tab = q.get('tab') || (/[#&]tab=(\w+)/.exec(location.hash) || [])[1];
+      if (tab && VIEWS[tab]) setTab(tab, true);
+      if (t0 && S.d.tickers[t0]) openDetail(t0, true);
       fetchLive();
     } catch (e) {
       S.err = String((e && e.message) || e);
@@ -756,7 +759,6 @@
     document.body.style.overflow = 'hidden';
     requestAnimationFrame(() => requestAnimationFrame(drawDetailChart));
     if (tg && tg.BackButton) tg.BackButton.show();
-    try { history.replaceState(null, '', '#t=' + t); } catch (e) { /* file:// */ }
   }
 
   function openDigest() {
@@ -780,7 +782,6 @@
     document.body.style.overflow = '';
     if (tg && tg.BackButton) tg.BackButton.hide();
     if (!silent) haptic('light');
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* file:// */ }
   }
 
   // Пришли живые цены — перерисовать карточку целиком (лесенка, условие, график), не сбивая прокрутку
