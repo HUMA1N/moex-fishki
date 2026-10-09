@@ -542,7 +542,10 @@
     const risks = (k.flags || []).slice();
     if (risks.length) html += `<div class="sec">Риски</div><div class="card"><ul class="dots" style="margin:0">${risks.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>`;
     if ((k.news || []).length) html += `<div class="sec">Новости</div><div class="card news">${newsLinks(k.news)}</div>`;
-    html += `<div class="actions"><button class="btn" data-cmd="report">🖼 Графики и PDF-отчёт в чат</button><button class="btn alt" data-cmd="t_${t}">💬 Эта карточка в чате</button></div>${foot()}`;
+    const canWatch = k.bucket === 'wait' && sc && (sc.mode === 'pullback' || sc.mode === 'breakout') && sc.stop != null;
+    html += `<div class="actions">${canWatch ? `<button class="btn" data-cmd="al_${t}">🔔 Сообщить, когда дойдёт до уровня</button>` : ''}
+      <button class="btn${canWatch ? ' alt' : ''}" data-cmd="report">🖼 Графики и PDF-отчёт в чат</button><button class="btn alt" data-cmd="t_${t}">💬 Эта карточка в чате</button></div>
+      ${canWatch ? '<div class="small" style="margin:0 18px">Бот напишет в чат, когда цена дойдёт до уровня входа по сценарию — в течение срока сценария.</div>' : ''}${foot()}`;
     return html;
   }
 
