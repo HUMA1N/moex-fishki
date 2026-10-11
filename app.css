@@ -13,6 +13,8 @@
   --soft: rgba(120, 125, 135, .09);
   --go: #1f9d57; --wait: #d68f00; --no: #e0464c;
   --go-bg: rgba(31, 157, 87, .12); --wait-bg: rgba(214, 143, 0, .13); --no-bg: rgba(224, 70, 76, .11);
+  --sgo: #c2185b; --swait: #7c4dff; --aside: #8a909a;
+  --sgo-bg: rgba(194, 24, 91, .11); --swait-bg: rgba(124, 77, 255, .12); --aside-bg: rgba(138, 144, 154, .12);
   --up: #1f9d57; --down: #e0464c;
   --shadow: 0 1px 2px rgba(15, 20, 30, .04), 0 6px 20px rgba(15, 20, 30, .05);
   --r: 18px;
@@ -29,6 +31,8 @@ html.dark {
   --soft: rgba(255, 255, 255, .05);
   --go: #34c27a; --wait: #f2b42c; --no: #f3585d;
   --go-bg: rgba(52, 194, 122, .14); --wait-bg: rgba(242, 180, 44, .14); --no-bg: rgba(243, 88, 93, .13);
+  --sgo: #f06292; --swait: #a48bff; --aside: #9aa1ab;
+  --sgo-bg: rgba(240, 98, 146, .14); --swait-bg: rgba(164, 139, 255, .14); --aside-bg: rgba(154, 161, 171, .13);
   --up: #34c27a; --down: #f3585d;
   --shadow: none;
 }
@@ -272,3 +276,10 @@ details[open] summary::after { transform: rotate(90deg); }
   .tile b { font-size: 24px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* шорт и «в стороне» (с 11.10.2026) */
+.tile.sgo { --c: var(--sgo); } .tile.swait { --c: var(--swait); } .tile.aside { --c: var(--aside); }
+.pill.sgo { background: var(--sgo-bg); color: var(--sgo); } .pill.swait { background: var(--swait-bg); color: var(--swait); }
+.pill.aside, .pill.sno { background: var(--aside-bg); color: var(--aside); }
+.banner.sgo { background: var(--sgo-bg); --c: var(--sgo); } .banner.swait { background: var(--swait-bg); --c: var(--swait); }
+.tag.tap { cursor: pointer; }
