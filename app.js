@@ -14,7 +14,7 @@
   const MON_IN = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
   const MON3 = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
   const WD = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-  const B = { go: 'Брать', wait: 'Ждать цены', no: 'Не брать' };
+  const B = { go: 'Брать', wait: 'Ждать цены', no: 'Не брать', sgo: 'Шорт сейчас', swait: 'Шорт: ждать', sno: 'Шорта нет', aside: 'В стороне' };
   const TREND = { up: 'вверх', down: 'вниз', side: 'боковой' };
   const ARROW = { up: '↗', down: '↘', side: '→' };
 
@@ -192,9 +192,13 @@
     marks.forEach(m => { m.row = m.p - prev < 19 ? 1 : 0; if (!m.row) prev = m.p; });
     const segs = [];
     if (e0 != null) {
-      segs.push(`<i class="seg-risk" style="left:${P(sc.stop)}%;width:${Math.max(0, P(e0) - P(sc.stop))}%"></i>`);
+      // шорт: стоп выше зоны, цели ниже — отрезки риска и прибыли зеркальные
+      const short = num(t1) !== null && t1 < e0;
+      const rs = short ? [e1, sc.stop] : [sc.stop, e0], gs = short ? [t2 || t1, e0] : [e1, t2 || t1];
+      const seg = (cl, a, b) => `<i class="${cl}" style="left:${P(Math.min(a, b))}%;width:${Math.max(0, Math.abs(P(b) - P(a)))}%"></i>`;
+      segs.push(seg('seg-risk', rs[0], rs[1]));
       segs.push(`<i class="seg-zone" style="left:${P(e0)}%;width:${Math.max(1.2, P(e1) - P(e0))}%"></i>`);
-      segs.push(`<i class="seg-gain" style="left:${P(e1)}%;width:${Math.max(0, P(t2 || t1) - P(e1))}%"></i>`);
+      segs.push(seg('seg-gain', gs[0], gs[1]));
     }
     const lbl = marks.map(m => `<i class="mk" style="left:${m.p}%;--c:${m.c}"></i><span class="lb r${m.row}" style="left:${Math.min(94, Math.max(6, m.p))}%;--c:${m.c}"><b>${m.name}</b>${fmt(m.v, k.dec)}</span>`).join('');
     const now = num(last) !== null ? `<i class="now" style="left:${P(last)}%" title="цена сейчас"></i>` : '';
@@ -222,6 +226,56 @@
     if (k.bucket === 'wait' && sc.mode === 'breakout' && ez.length && last > Math.min(...ez))
       return '<span class="pill wait">цена выше уровня — нужно закрытие дня</span>';
     return '';
+  }
+
+  // ---------- шорт (с 11.10.2026): тот же формат сценария, стоп выше, цели ниже ----------
+  const SB = { sgo: 'go', swait: 'wait', sno: 'no' };
+  function sk(t) {
+    const k = tk(t);
+    return { t, name: k.name, sector: k.sector, dec: k.dec, sc: k.ssc, br: k.sbr, bucket: SB[k.sbucket] || 'no',
+             cond: k.scond || '', reason: k.sreason || '', why: k.swhy || '' };
+  }
+  function condLiveS(s, last) {
+    const sc = s.sc || {}, ez = (sc.entry || []).filter(x => x != null);
+    if (s.bucket !== 'wait' || num(last) === null || !ez.length) return s.cond;
+    if (sc.mode === 'breakdown') { const lv = Math.max(...ez); return `ниже ${fmt(lv, s.dec)} (${pct((lv / last - 1) * 100)})`; }
+    const lv = num(sc.wait) !== null ? sc.wait : Math.min(...ez);
+    return sc.mode === 'now' ? s.cond : `до ${fmt(lv, s.dec)} (${pct((lv / last - 1) * 100)})`;
+  }
+  function statusNoteS(s, last) {
+    const sc = s.sc || {};
+    if (s.bucket === 'no' || num(last) === null || sc.stop == null) return '';
+    if (last > sc.stop) return '<span class="pill no">цена выше стопа шорта</span>';
+    const t1 = sc.tp && sc.tp[0] && sc.tp[0].price;
+    if (s.bucket === 'wait' && num(t1) !== null && last < t1) return '<span class="pill n">цена ушла ниже T1 — уровни выпуска устарели</span>';
+    const ez = (sc.entry || []).filter(x => x != null);
+    if (s.bucket === 'wait' && sc.mode !== 'breakdown' && ez.length && last >= Math.min(...ez) * 0.998)
+      return '<span class="pill swait">цена в зоне продажи — смотри условие</span>';
+    if (s.bucket === 'wait' && sc.mode === 'breakdown' && ez.length && last < Math.max(...ez))
+      return '<span class="pill swait">цена ниже уровня — нужно закрытие дня</span>';
+    return '';
+  }
+  function scenCardS(t) {
+    const s = sk(t), sc = s.sc || {}, k = tk(t), last = priceOf(t), chg = chgOf(t);
+    const meta = [];
+    if (sc.strength) meta.push(`<span>Сигнал: <b>${esc(sc.strength)}</b></span>`);
+    if (sc.days_med) meta.push(`<span>T1 обычно ~${sc.days_med} дн.</span>`);
+    const st = statusNoteS(s, last);
+    return `<div class="card tap scen" data-t="${t}">
+      <div class="top">${ava(t)}<div class="mid"><div class="t1">${esc(k.name)}</div><div class="t2">${t} · ${esc(k.sector)}</div></div>
+        <div class="right"><b>${fmt(last, k.dec)}</b><span class="${cls(chg)}">${pct(chg, 2)}</span></div></div>
+      ${ladder(s, last)}
+      <div class="meta">${pill(k.sbucket)}<span>${esc(condLiveS(s, last))}</span></div>
+      ${meta.length || st ? `<div class="meta">${meta.join('')}${st}</div>` : ''}
+    </div>`;
+  }
+  function intraCard() {
+    const ix = S.d.intraday;
+    if (!ix) return '';
+    const c = (ix.candidates || []).map(x => `<span class="tag tap" data-t="${esc(x.t)}">${esc(x.t)} <b>${x.side === 'long' ? 'лонг' : 'шорт'}</b></span>`).join('');
+    return `<div class="sec">Внутри дня · ${WD[dateObj(ix.session).getDay()]} ${ddmm(ix.session)}</div>
+      <div class="card"><div class="p" style="margin:0">${esc(ix.text || '')}</div>${c ? `<div class="tags" style="margin-top:8px">${c}</div>` : ''}
+      <div class="small" style="margin-top:8px">Уровни по каждой бумаге — в её карточке. Эксперимент: вход по закрытию часа за вчерашним диапазоном, выход до конца основной сессии.</div></div>`;
   }
 
   function liveChip() {
@@ -297,9 +351,26 @@
   }
 
   // ---------- разделы ----------
+  function tiles() {
+    const d = S.d;
+    if (!d.short_on) return ['go', 'wait', 'no'].map(b => [b, d.groups[b].length]);
+    return [['go', d.groups.go.length], ['wait', d.groups.wait.length], ['aside', (d.aside || []).length],
+            ['sgo', (d.sgroups.sgo || []).length], ['swait', (d.sgroups.swait || []).length]];
+  }
+  // фильтр списка акций: группы лонга, шорта и «в стороне»
+  function inFilter(t, f) {
+    const k = tk(t);
+    if (f === 'all') return true;
+    if (f === 'aside') return (S.d.aside || []).includes(t);
+    if (f === 'short') return k.sbucket === 'sgo' || k.sbucket === 'swait';
+    if (f === 'sgo' || f === 'swait') return k.sbucket === f;
+    return k.bucket === f;
+  }
+
   function vHome() {
     const d = S.d, u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
     const scen = d.groups.go.concat(d.groups.wait);
+    const sscen = d.short_on ? (d.sgroups.sgo || []).concat(d.sgroups.swait || []) : [];
     return `
     <section class="hero">
       <div class="hello">${u && u.first_name ? 'Привет, ' + esc(u.first_name) : 'Привет'} 👋</div>
@@ -310,9 +381,12 @@
     ${d.stale && d.stale.length ? `<div class="warnbox">⚠️ Устарело или нет данных: ${esc(d.stale.join('; '))}</div>` : ''}
     <div class="kpis">${kpis()}</div>
     <div class="sec">Сигналы выпуска</div>
-    <div class="tiles">${['go', 'wait', 'no'].map(b => `<button class="tile ${b}" data-filter-go="${b}"><b>${d.groups[b].length}</b><span>${B[b]}</span></button>`).join('')}</div>
-    <div class="sec">Сценарии<a data-tab="stocks">Все акции</a></div>
-    ${scen.length ? scen.map(scenCard).join('') : `<div class="card"><div class="empty"><span class="e">🧘</span>Сейчас по правилам нет ни одного сценария — бумаги ждут своих уровней.</div></div>`}
+    <div class="tiles">${tiles().map(x => `<button class="tile ${x[0]}" data-filter-go="${x[0] === 'sgo' || x[0] === 'swait' ? 'short' : x[0]}"><b>${x[1]}</b><span>${B[x[0]]}</span></button>`).join('')}</div>
+    <div class="sec">${d.short_on ? 'Лонг — покупка' : 'Сценарии'}<a data-tab="stocks">Все акции</a></div>
+    ${scen.length ? scen.map(scenCard).join('') : `<div class="card"><div class="empty"><span class="e">🧘</span>Сейчас по правилам нет ни одного сценария${d.short_on ? ' на покупку' : ''} — бумаги ждут своих уровней.</div></div>`}
+    ${d.short_on ? `<div class="sec">Шорт — продажа</div>${d.short_note ? `<div class="warnbox" style="margin-bottom:10px">${esc(d.short_note[0].toUpperCase() + d.short_note.slice(1))}. Шорт у брокера платный; через отсечку шорт платит дивиденд.</div>` : ''}
+      ${sscen.length ? sscen.map(scenCardS).join('') : `<div class="card"><div class="empty"><span class="e">🧘</span>Шорт-сценариев по правилам сейчас нет.</div></div>`}` : ''}
+    ${intraCard()}
     <div class="sec">Прошлые сценарии<a data-tab="track">Подробнее</a></div>
     <div class="card tap" data-tab="track">${trackMini()}</div>
     <div class="sec">Ближайшие события<a data-tab="cal">Все</a></div>
@@ -325,19 +399,28 @@
   function vStocks() {
     const d = S.d;
     let list = d.order.slice();
-    if (S.filter !== 'all') list = list.filter(t => tk(t).bucket === S.filter);
+    if (d.short_on && S.filter === 'no') S.filter = 'aside';
+    if (!d.short_on && ['aside', 'short', 'sgo', 'swait'].includes(S.filter)) S.filter = 'all';
+    if (S.filter !== 'all') list = list.filter(t => inFilter(t, S.filter));
     if (S.sort === 'chg') list.sort((a, b) => (num(chgOf(b)) ?? -1e9) - (num(chgOf(a)) ?? -1e9));
-    const cnt = b => b === 'all' ? d.order.length : d.groups[b].length;
+    const cnt = b => d.order.filter(t => inFilter(t, b)).length;
     const rows = list.map(t => {
       const k = tk(t), last = priceOf(t), chg = chgOf(t);
+      const shortOn = d.short_on && (k.sbucket === 'sgo' || k.sbucket === 'swait');
+      const longOn = k.bucket !== 'no';
+      // строка: группа лонга, а если лонга нет, но есть шорт — группа шорта; оба сценария — две плашки
+      const p = !longOn && shortOn ? `${pill(k.sbucket)}<span class="c">${esc(condLiveS(sk(t), last))}</span>`
+        : `${pill(d.short_on && !longOn ? 'aside' : k.bucket)}<span class="c">${esc(condLive(k, last))}</span>${longOn && shortOn ? ' ' + pill(k.sbucket) : ''}`;
       return `<button class="lrow" data-t="${t}">${ava(t)}<div class="mid"><div class="t1">${esc(k.name)}</div>
         <div class="t2">${t} · ${esc(k.sector)}${k.rank ? ' · №' + k.rank + ' в рейтинге' : ''}</div>
-        <div class="t3">${pill(k.bucket)}<span class="c">${esc(condLive(k, last))}</span></div></div>
+        <div class="t3">${p}</div></div>
         ${spark(k)}<div class="right"><b>${fmt(last, k.dec)}</b><span class="${cls(chg)}">${pct(chg, 2)}</span></div></button>`;
     }).join('');
+    const segs = d.short_on ? [['all', 'Все'], ['go', 'Брать'], ['wait', 'Ждать'], ['short', 'Шорт'], ['aside', 'В стороне']]
+                            : [['all', 'Все'], ['go', 'Брать'], ['wait', 'Ждать'], ['no', 'Не брать']];
     return `
     <section class="hero"><h1>Акции</h1><div class="sub">${d.order.length} голубых фишек Мосбиржи · выпуск ${esc(d.issue_long)}</div></section>
-    <div class="seg">${[['all', 'Все'], ['go', 'Брать'], ['wait', 'Ждать'], ['no', 'Не брать']].map(x => `<button data-filter="${x[0]}" class="${S.filter === x[0] ? 'on' : ''}">${x[1]} · ${cnt(x[0])}</button>`).join('')}</div>
+    <div class="seg">${segs.map(x => `<button data-filter="${x[0]}" class="${S.filter === x[0] ? 'on' : ''}">${x[1]} · ${cnt(x[0])}</button>`).join('')}</div>
     <div class="sortrow"><button data-sort="rank" class="${S.sort === 'rank' ? 'on' : ''}">По рейтингу</button><button data-sort="chg" class="${S.sort === 'chg' ? 'on' : ''}">По изменению за день</button></div>
     <div class="card list" style="padding:0">${rows || '<div class="empty"><span class="e">🔍</span>В этой группе сейчас пусто</div>'}</div>
     ${foot()}`;
@@ -405,6 +488,8 @@
     ['Тайм-стоп', 'Если T1 не пришла за указанное число торговых дней — сценарий устарел: выход или пересмотр.'],
     ['Докупка', 'Только пока сценарий в силе: внутри зоны входа (вход частями). Ниже зоны, ниже стопа и в сломанном тренде — не докупать.'],
     ['Рейтинг', 'Сила бумаги внутри сектора: стоимость, качество, дивиденды, импульс, мнение аналитиков, рост. Итог — 60% силы и 40% теханализа.'],
+    ['Шорт', 'Те же правила зеркально: продажа у сопротивления, на отскоке вверх или после закрытия ниже поддержки; стоп выше входа, цели ниже. Шорт у брокера платный, через отсечку шорт платит дивиденд. В истории шорт по этим правилам слабее покупок — это видно в строке проверки.'],
+    ['Внутри дня', 'Правило пробоя вчерашнего диапазона по часовым свечам основной сессии: вход по закрытию часа за уровнем до 17:00, выход до конца сессии. Кандидат — только если у бумаги правило давало перевес в похожих днях после комиссии; иначе это уровни для наблюдения.'],
   ];
 
   function vMore() {
@@ -422,7 +507,7 @@
       ${mi('🔕', '#8a909a', 'Выключить рассылку', 'обзор только по запросу', 'data-cmd="sub_off"')}
     </div>
     <div class="sec">Расписание</div>
-    <div class="card"><b>${esc((d.schedule.days || []).join(', '))} в ${esc(d.schedule.time)} МСК</b><div class="p">Обзор приходит в чат: все 15 фишек — брать, ждать цены, не брать, с уровнями, стопами, целями и планом после входа.</div></div>
+    <div class="card"><b>${esc((d.schedule.days || []).join(', '))} в ${esc(d.schedule.time)} МСК</b><div class="p">Обзор приходит в чат: все 15 фишек — лонг (брать, ждать цены), шорт, внутри дня и что в стороне, с уровнями, стопами, целями и планом после входа.</div></div>
     <div class="sec">Как читать обзор</div>
     <div class="card">${GLOSSARY.map(g => `<details><summary>${esc(g[0])}</summary><p class="p">${esc(g[1])}</p></details>`).join('')}</div>
     <div class="sec">Источники данных</div>
@@ -433,17 +518,77 @@
   const VIEWS = { home: vHome, stocks: vStocks, cal: vCal, track: vTrack, more: vMore };
 
   // ---------- карточка акции ----------
+  // карточка: шорт-сценарий (с 11.10.2026)
+  function shortDetail(t, last) {
+    const s = sk(t), sc = s.sc, br = s.br, k = tk(t);
+    if (!S.d.short_on || !sc) return '';
+    if (s.bucket === 'no') return `<div class="sec">Шорт</div><div class="card"><div class="p" style="margin:0">Шорта нет: ${esc(s.reason || 'по правилам продажи нет')}.</div></div>`;
+    const ez = (sc.entry || []).filter(x => x != null);
+    const zone = ez.length ? (Math.min(...ez) === Math.max(...ez) ? fmt(ez[0], k.dec) : fmt(Math.min(...ez), k.dec) + '–' + fmt(Math.max(...ez), k.dec)) : '—';
+    const ref = sc.wait || (ez.length ? Math.min(...ez) : null);
+    const tp = sc.tp || [];
+    let html = `<div class="sec">Шорт-сценарий</div><div class="card">${ladder(s, last)}
+        <div class="kv">
+          <div><span>Продажа по сценарию</span><b>${zone}</b><i>${num(ref) !== null && num(last) !== null ? pct((ref / last - 1) * 100) + ' от цены' : ''}${sc.entry_min ? ' · не ниже ' + fmt(sc.entry_min, k.dec) : ''}</i></div>
+          <div><span>Стоп</span><b class="down">${fmt(sc.stop, k.dec)}</b><i>${pct(sc.stop_pct)} от входа</i></div>
+          ${tp.map((x, i) => `<div><span>T${i + 1}${x.share ? ' · ' + esc(x.share) : ''}</span><b class="up">${fmt(x.price, k.dec)}</b><i>${pct(x.pct)} от входа</i></div>`).join('')}
+          <div><span>Прибыль / риск</span><b>${(sc.rr || []).map(x => trim0(fmt(x, 1))).join(' · ') || '—'}</b><i>для T1 · T2</i></div>
+          <div><span>T1 обычно</span><b>${sc.days_med ? '~' + sc.days_med + ' дн.' : '—'}</b><i>${sc.days_p75 ? '75% случаев — до ' + sc.days_p75 + ' дн.' : 'торговых дней'}</i></div>
+        </div>
+        ${sc.plan && sc.plan.entry ? `<div class="rule">${esc(sc.plan.entry)}${sc.trigger ? '. Условие: ' + esc(sc.trigger) : ''}.</div>` : ''}
+        ${sc.inval ? `<div class="small" style="margin-top:8px">Сценарий отменяется: ${esc(sc.inval)}${sc.time_stop ? ' · тайм-стоп ' + sc.time_stop + ' торг. дн.' : ''}</div>` : ''}
+        ${s.why ? `<div class="small" style="margin-top:8px">Почему: ${esc(s.why)}.</div>` : ''}
+        <div class="small" style="margin-top:6px">Риск: ${esc(sc.risk || 'резкий рост выбивает стоп')}; шорт у брокера платный, через отсечку шорт платит дивиденд.</div>
+      </div>`;
+    if (br && num(br.n) !== null) {
+      const pt = num(br.pt) || 0, ps = num(br.ps) || 0, pn = Math.max(0, 1 - pt - ps);
+      html += `<div class="sec">Сила сигнала шорта</div><div class="card">
+        <div style="display:flex;align-items:center;gap:8px"><span class="pill ${sc.strength === 'сильный' ? 'go' : sc.strength === 'средний' ? 'wait' : 'n'}">сигнал ${esc(sc.strength || '—')}</span><span class="small">n = ${br.n} похожих случаев${br.since ? ' с ' + br.since.slice(0, 4) : ''}</span></div>
+        ${br.n >= 20 ? `<div class="stack"><i class="a" style="width:${pt * 100}%"></i><i class="b" style="width:${ps * 100}%"></i><i class="c" style="width:${pn * 100}%"></i></div>
+        <div class="slegend"><span><i style="background:var(--go)"></i>T1 раньше стопа ${Math.round(pt * 100)}%</span><span><i style="background:var(--no)"></i>стоп раньше ${Math.round(ps * 100)}%</span><span><i style="background:var(--hint);opacity:.4"></i>ни то ни другое ${Math.round(pn * 100)}%</span></div>` : ''}
+        <p class="p">${esc(br.text || '')}</p>
+        ${S.d.short_note ? `<div class="small">${esc(S.d.short_note[0].toUpperCase() + S.d.short_note.slice(1))}.</div>` : ''}
+      </div>`;
+    }
+    const pl = sc.plan || {};
+    const plan = [pl.breakeven && 'T1: откуп 1/2, ' + pl.breakeven, pl.add && pl.add[0].toUpperCase() + pl.add.slice(1),
+                  pl.time && pl.time[0].toUpperCase() + pl.time.slice(1), 'Стоп — по закрытию дня выше стопа, без усреднения.'].filter(Boolean);
+    html += `<div class="sec">План после продажи</div><div class="card"><ul class="dots" style="margin:0">${plan.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
+    return html;
+  }
+
+  // карточка: «внутри дня» — уровни вчерашнего диапазона и как правило работало у бумаги
+  function intraDetail(t) {
+    const k = tk(t), x = k.intra;
+    if (!x) return '';
+    const row = (side, lab) => {
+      const p = x[side] || {}, st = p.stats || {};
+      if (num(p.level) === null) return '';
+      const stat = st.n_trig ? `в похожих днях: цель раньше стопа ${Math.round((st.p_target || 0) * 100)}%, стоп ${Math.round((st.p_stop || 0) * 100)}% (n=${st.n_trig}), ср. итог ${pct(st.avg_pct, 2)}` : 'похожих дней мало';
+      return `<li><b>${lab} ${fmt(p.level, k.dec)}</b> (${esc(p.basis || '')}) → цель ${side === 'long' ? '+' : '−'}${trim0(fmt(x.target_pct, 2))}%, стоп ${side === 'long' ? '−' : '+'}${trim0(fmt(x.stop_pct, 2))}%; ${stat}. ${p.candidate ? '<b>Кандидат</b>' : esc('Нет: ' + (p.why_not || ''))}</li>`;
+    };
+    return `<div class="sec">Внутри дня · ${WD[dateObj(x.session).getDay()]} ${ddmm(x.session)}</div><div class="card">
+      <ul class="dots" style="margin:0">${row('long', 'Час закроется выше')}${row('short', 'Час закроется ниже')}</ul>
+      <div class="small" style="margin-top:8px">Вход по закрытию часа основной сессии до 17:00, выход до её конца. Эксперимент; частоты — прошлое, не прогноз.</div></div>`;
+  }
+
   function vDetail(t) {
     const k = tk(t), sc = k.sc, br = k.br, ta = k.ta || {}, last = priceOf(t), chg = chgOf(t);
     const st = statusNote(k, last);
-    const banner = k.bucket === 'go' ? `🟢 <b>Брать по сценарию</b> — ${esc(k.cond)}.`
+    const ss = sk(t), shortOn = S.d.short_on && (ss.bucket === 'go' || ss.bucket === 'wait');
+    const sline = shortOn ? (ss.bucket === 'go' ? `🔻 <b>Шорт по сценарию</b> — ${esc(ss.cond)}.`
+      : `🔸 <b>Шорт: ждать цены</b> — ${esc(condLiveS(ss, last))}: дойдёт — сценарий продажи в силе, не дойдёт — пропускаем.`) : '';
+    let banner = k.bucket === 'go' ? `🟢 <b>Брать по сценарию</b> — ${esc(k.cond)}.`
       : k.bucket === 'wait' ? `🟡 <b>Ждать цены</b> — ${esc(condLive(k, last))}${sc && sc.valid_days ? ' за ' + sc.valid_days + ' торг. дн. после выпуска' : ''}: дойдёт — сценарий в силе, не дойдёт — пропускаем.`
       : `🔴 <b>Не брать</b> — ${esc(k.reason || k.cond)}.`;
+    if (shortOn) banner = k.bucket === 'no' ? sline + `<div class="small" style="margin-top:6px">Лонг: не брать — ${esc(k.reason || k.cond)}.</div>`
+      : banner + `<div style="margin-top:6px">${sline}</div>`;
+    const bcls = shortOn && k.bucket === 'no' ? k.sbucket : k.bucket;
     let html = `
       <div class="dhead"><button class="back" data-act="back" aria-label="Назад">‹</button>${ava(t, true)}
         <div><h1>${esc(k.name)}</h1><div class="sub">${t} · ${esc(k.sector)}${k.rank ? ' · №' + k.rank + ' в рейтинге' : ''}</div></div></div>
       <div class="bigprice"><b id="dPrice">${fmt(last, k.dec)} ₽</b><span id="dChg" class="${cls(chg)}">${pct(chg, 2)} за день</span></div>
-      <div class="banner ${k.bucket}">${banner}${k.why ? '<div style="margin-top:6px">Почему: ' + esc(k.why) + '.</div>' : ''}${st ? '<div style="margin-top:8px">' + st + '</div>' : ''}</div>
+      <div class="banner ${bcls}">${banner}${k.why ? '<div style="margin-top:6px">Почему: ' + esc(k.why) + '.</div>' : ''}${st ? '<div style="margin-top:8px">' + st + '</div>' : ''}</div>
       <div class="card chartcard">
         <div class="chartbar"><span class="small">Дневные свечи</span><div class="seg mini">${[[63, '3М'], [126, '6М'], [250, '1Г']].map(x => `<button data-range="${x[0]}" class="${S.range === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div></div>
         <canvas id="chart" aria-label="График ${esc(t)}"></canvas><div class="tip" id="tip"></div>
@@ -485,6 +630,8 @@
       html += `<div class="sec">Почему не брать</div><div class="card"><div class="p" style="margin:0">${esc(sc.skip)}</div>
         ${sc.levels_txt ? `<div class="small" style="margin-top:8px">Сценарий, который правила отсеяли: ${esc(sc.levels_txt)}</div>` : ''}</div>`;
     }
+    html += shortDetail(t, last);
+    html += intraDetail(t);
     // теханализ
     const tr = ta.trend || {};
     const tags = [];
@@ -543,9 +690,12 @@
     if (risks.length) html += `<div class="sec">Риски</div><div class="card"><ul class="dots" style="margin:0">${risks.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>`;
     if ((k.news || []).length) html += `<div class="sec">Новости</div><div class="card news">${newsLinks(k.news)}</div>`;
     const canWatch = k.bucket === 'wait' && sc && (sc.mode === 'pullback' || sc.mode === 'breakout') && sc.stop != null;
+    const ssc = k.ssc || {};
+    const canWatchS = S.d.short_on && k.sbucket === 'swait' && (ssc.mode === 'rally' || ssc.mode === 'breakdown') && ssc.stop != null;
     html += `<div class="actions">${canWatch ? `<button class="btn" data-cmd="al_${t}">🔔 Сообщить, когда дойдёт до уровня</button>` : ''}
-      <button class="btn${canWatch ? ' alt' : ''}" data-cmd="report">🖼 Графики и PDF-отчёт в чат</button><button class="btn alt" data-cmd="t_${t}">💬 Эта карточка в чате</button></div>
-      ${canWatch ? '<div class="small" style="margin:0 18px">Бот напишет в чат, когда цена дойдёт до уровня входа по сценарию — в течение срока сценария.</div>' : ''}${foot()}`;
+      ${canWatchS ? `<button class="btn${canWatch ? ' alt' : ''}" data-cmd="als_${t}">🔔 Шорт: сообщить о входе</button>` : ''}
+      <button class="btn${canWatch || canWatchS ? ' alt' : ''}" data-cmd="report">🖼 Графики и PDF-отчёт в чат</button><button class="btn alt" data-cmd="t_${t}">💬 Эта карточка в чате</button></div>
+      ${canWatch || canWatchS ? '<div class="small" style="margin:0 18px">Бот напишет в чат, когда цена дойдёт до уровня входа по сценарию — в течение срока сценария.</div>' : ''}${foot()}`;
     return html;
   }
 
