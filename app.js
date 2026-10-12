@@ -449,7 +449,7 @@
     <div class="small" style="margin-top:8px">Сейчас ставка ${trim0(fmt(d.macro.key_rate, 2))}%</div></div>
     <div class="sec">Выпуски обзора</div>
     <div class="card"><div class="tags">${next.map(x => `<span class="tag"><b>${WD[dateObj(x).getDay()]} ${ddmm(x)}</b> ${x.slice(11, 16)}</span>`).join('')}</div>
-    <div class="small" style="margin-top:8px">Расписание: ${esc((d.schedule.days || []).join(', '))} в ${esc(d.schedule.time)} МСК — обзор приходит в чат с ботом</div></div>
+    <div class="small" style="margin-top:8px">Расписание: ${esc((d.schedule.days || []).join(', '))} в ${esc(d.schedule.time)} МСК — обзор обновляется здесь, в меню</div></div>
     ${foot()}`;
   }
 
@@ -503,11 +503,11 @@
       ${mi('🖼', '#8b5cf6', 'Графики и PDF-отчёт', 'альбом графиков и полный отчёт — в чат', 'data-cmd="report"')}
       ${mi('📄', '#0ea5a4', 'Последний выпуск', 'текст обзора от ' + ddmm(d.run_date), 'data-act="digest"')}
       ${mi('💬', '#f59e0b', 'Задать вопрос', 'текстом или голосовым в чате с ботом', 'data-cmd="ask"')}
-      ${mi('🔔', '#22a861', 'Включить рассылку', 'обзор по расписанию', 'data-cmd="sub_on"')}
-      ${mi('🔕', '#8a909a', 'Выключить рассылку', 'обзор только по запросу', 'data-cmd="sub_off"')}
+      ${mi('🔔', '#22a861', 'Обзор ещё и в чат', 'присылать выпуск по расписанию в чат с ботом', 'data-cmd="sub_on"')}
+      ${mi('🔕', '#8a909a', 'Обзор только в меню', 'в чат не присылать (так по умолчанию)', 'data-cmd="sub_off"')}
     </div>
     <div class="sec">Расписание</div>
-    <div class="card"><b>${esc((d.schedule.days || []).join(', '))} в ${esc(d.schedule.time)} МСК</b><div class="p">Обзор приходит в чат: все 15 фишек — лонг (брать, ждать цены), шорт, внутри дня и что в стороне, с уровнями, стопами, целями и планом после входа.</div></div>
+    <div class="card"><b>${esc((d.schedule.days || []).join(', '))} в ${esc(d.schedule.time)} МСК</b><div class="p">Обзор обновляется здесь, в меню, в чат бот сам не пишет: все 15 фишек — лонг (брать, ждать цены), шорт, внутри дня и что в стороне, с уровнями, стопами, целями и планом после входа.</div></div>
     <div class="sec">Как читать обзор</div>
     <div class="card">${GLOSSARY.map(g => `<details><summary>${esc(g[0])}</summary><p class="p">${esc(g[1])}</p></details>`).join('')}</div>
     <div class="sec">Источники данных</div>
@@ -917,7 +917,7 @@
   function openDigest() {
     haptic('light');
     S.detail = '__digest';
-    $('#sheetInner').innerHTML = `<div class="dhead"><button class="back" data-act="back" aria-label="Назад">‹</button><div><h1>Выпуск ${ddmm(S.d.run_date)}</h1><div class="sub">так он пришёл в чат</div></div></div>
+    $('#sheetInner').innerHTML = `<div class="dhead"><button class="back" data-act="back" aria-label="Назад">‹</button><div><h1>Выпуск ${ddmm(S.d.run_date)}</h1><div class="sub">полный текст выпуска</div></div></div>
       <div class="card digest" style="margin-top:12px">${tgHtml(S.d.digest || 'Текста выпуска нет')}</div><div class="actions"><button class="btn" data-cmd="top">🔄 Собрать свежий обзор</button></div>`;
     const sh = $('#sheet');
     sh.scrollTop = 0;
