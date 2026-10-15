@@ -8,7 +8,7 @@
   const IN_TG = !!(tg && tg.initData);
   const $ = (s, el = document) => el.querySelector(s);
   const S = { d: null, err: null, live: {}, liveAt: '', imoex: null, tab: 'home', filter: 'all', sort: 'rank',
-              range: 126, detail: null, hover: null };
+              range: 126, detail: null, hover: null, deals: null, dealsAt: '' };
   const NB = ' ';
   const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
   const MON_IN = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
@@ -104,6 +104,7 @@
       if (tab && VIEWS[tab]) setTab(tab, true);
       if (t0 && S.d.tickers[t0]) openDetail(t0, true);
       fetchLive();
+      fetchDeals();
     } catch (e) {
       S.err = String((e && e.message) || e);
       render();
@@ -151,15 +152,136 @@
     }
   }
 
+  // ---------- открытые сделки (Костя, 14.10.2026) ----------
+  // Сценарии учёта из выгрузки (data.json → deals.recs) пересчитываются по свежим дневным свечам ISS теми же
+  // правилами, что у бота (deals.js = bot/deals.py = track.evaluate). Нет сети — состояние на момент выгрузки.
+  const CLOSE_KINDS = ['close_above', 'close_below'];
+  const mskToday = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
+  const fmtL = x => { x = num(x); if (x === null) return '—'; const v = Math.abs(x); return trim0(fmt(x, v === 0 ? 0 : Math.max(0, Math.min(4, 4 - Math.floor(Math.log10(v)))))); };
+  const zoneTxt = z => !z || !z.length ? '' : (Math.min(...z) === Math.max(...z) ? fmtL(z[0]) : fmtL(Math.min(...z)) + '–' + fmtL(Math.max(...z)));
+
+  function exportedDeals() {
+    const dd = S.d && S.d.deals, D = window.Deals;
+    if (!dd || !dd.recs || !D) return [];
+    return dd.recs.filter(r => dd.state && dd.state[r.id]).map(r => {
+      const e = dd.state[r.id];
+      const last = num(e.price) !== null ? { close: e.price, date: e.price_date } : null;
+      return D.item(r, e, last, !!e.crossed, (+r.valid || 5) - (+e.days_left || 0), dd.ctx);
+    });
+  }
+  const dealItems = () => S.deals || exportedDeals();
+
+  async function fetchDeals() {
+    const dd = S.d && S.d.deals;
+    if (!dd || !dd.recs || !dd.recs.length || !window.Deals) return;
+    const since = {};
+    dd.recs.forEach(r => { if (!since[r.t] || r.asof < since[r.t]) since[r.t] = r.asof; });
+    const base = 'https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/';
+    const ctl = window.AbortController ? new AbortController() : null;
+    const to = setTimeout(() => ctl && ctl.abort(), 12000);
+    try {
+      const opt = ctl ? { signal: ctl.signal } : {};
+      const got = await Promise.all(Object.keys(since).map(t =>
+        fetch(base + t + '/candles.json?interval=24&iss.meta=off&candles.columns=open,close,high,low,begin&from=' + since[t], opt)
+          .then(r => r.json())
+          .then(j => [t, ((j.candles && j.candles.data) || []).filter(row => row.slice(0, 4).every(v => v !== null && v !== ''))
+            .map(row => ({ open: +row[0], close: +row[1], high: +row[2], low: +row[3], date: String(row[4]).slice(0, 10) }))])
+          .catch(() => [t, null])));
+      const bars = {};
+      got.forEach(([t, b]) => { if (b && b.length) bars[t] = b; });
+      if (!Object.keys(bars).length) return;
+      const fresh = window.Deals.compute(dd.recs.filter(r => bars[r.t]), bars, mskToday(), dd.ctx);
+      S.deals = fresh.concat(exportedDeals().filter(x => !bars[x.t]));     // по бумагам без свечей — из выгрузки
+      const n = new Date(Date.now() + 3 * 3600e3).toISOString();
+      S.dealsAt = ddmm(n.slice(0, 10)) + ', ' + n.slice(11, 16);
+      if (S.detail && S.detail !== '__digest') refreshDetailPrice(); else render(false);
+    } catch (e) {
+      /* сеть: остаётся выгрузка */
+    } finally {
+      clearTimeout(to);
+    }
+  }
+
+  function joinTxt(x) {
+    const sh = x.side === 'short';
+    if (x.group !== 'open') return null;
+    if (x.stale) {            // вышел выпуск новее сделки: новые деньги — по его сценарию
+      const k = tk(x.t) || {}, when = ddmm(S.d.run_date);
+      return x.cur_ok ? ['go', 'Зайти или докупить — по сценарию выпуска ' + when + ': ' + (sh ? k.scond : k.cond)]
+        : ['no', 'Зайти или докупить — нет: в выпуске ' + when + ' сценария ' + (sh ? 'продажи' : 'покупки') + ' нет. Сделка ведётся по плану своего выпуска: стоп, цели, срок'];
+    }
+    if (x.t1_done) return ['no', 'Новый вход — поздно: T1 уже была, половина зафиксирована, стоп в безубытке'];
+    if (num(x.limit) === null) return null;
+    if (x.join_ok) return ['go', (sh ? 'Успеть продать (зайти в шорт): не ниже ' : 'Успеть зайти: не выше ') + fmtL(x.limit) + ' ₽'];
+    if (num(x.price) !== null && (sh ? x.price >= x.stop : x.price <= x.stop)) return ['no', 'Цена у стопа — новый вход не рассматривается'];
+    return ['no', 'Догонять поздно: цена ' + (sh ? 'ниже ' : 'выше ') + fmtL(x.limit) + ' ₽ — прибыль/риск до T1 хуже 1:1,5'];
+  }
+  function addTxt(x) {
+    const sh = x.side === 'short', verb = sh ? 'Добрать шорт' : 'Докупить';
+    if (x.group !== 'open' || x.stale) return '';
+    if (x.t1_done) return verb + ' — нет: после T1 позицию не наращиваем';
+    if (!x.add) {
+      const rule = (x.rec && x.rec.add_rule) || '';
+      if (!rule) return verb + ' — по плану выпуска ' + ddmm(x.rec.run) + ': только в зоне входа, за стопом — нет';
+      const why = /^не /.test(rule) && rule.indexOf(':') > 0 ? rule.slice(rule.indexOf(':') + 1).trim() : 'вход одной ценой';
+      return verb + ' — нет: ' + why;
+    }
+    return verb + (x.add_ok ? ': можно в зоне ' + zoneTxt(x.add) + ' ₽ — цена сейчас в ней' : ': только в зоне ' + zoneTxt(x.add) + ' ₽');
+  }
+  const levelsTxt = x => ['стоп ' + fmtL(x.stop) + (x.t1_done ? ' (безубыток)' : ''), 'T1 ' + fmtL(x.t1) + (x.t1_done ? ' ✓' : ' (1/2)'),
+    'T2 ' + fmtL(x.t2), num(x.days_in_trade) !== null ? 'срок: прошло ' + x.days_in_trade + ' из ' + (x.rec ? x.rec.tdays : '') + ' торг. дн.' : '']
+    .filter(Boolean).join(' · ');
+
+  function dealCard(x, inDetail) {
+    const k = tk(x.t) || {}, sh = x.side === 'short', res = num(x.result_pct);
+    const fake = { t: x.t, dec: k.dec, bucket: 'go', sc: { entry: [x.entry_price, x.entry_price], stop: x.stop, tp: [{ price: x.t1 }, { price: x.t2 }] } };
+    const j = joinTxt(x), a = addTxt(x);
+    return `<div class="card${inDetail ? '' : ' tap'} scen deal"${inDetail ? '' : ` data-t="${x.t}"`}>
+      <div class="top">${ava(x.t)}<div class="mid"><div class="t1">${esc(k.name || x.t)} <span class="pill ${sh ? 'sgo' : 'go'}">${sh ? 'шорт' : 'лонг'}</span></div>
+        <div class="t2">вход ${ddmm(x.entry_date)} по ${fmtL(x.entry_price)} ₽ · выпуск ${ddmm(x.rec.run)}</div></div>
+        <div class="right"><b>${fmtL(x.price)}</b><span class="${cls(res)}">${res !== null ? pct(res) : ''}</span></div></div>
+      ${ladder(fake, x.price)}
+      <div class="dl">${j ? `<div class="${j[0]}">${x.stale ? (j[0] === 'go' ? '↪️' : '⛔') : (j[0] === 'go' ? '✅' : '⛔')} ${esc(j[1])}</div>` : ''}${a ? `<div>➕ ${esc(a)}</div>` : ''}</div>
+      <div class="small" style="margin-top:6px">${esc(levelsTxt(x))}</div>
+    </div>`;
+  }
+  function pendRow(x) {
+    const k = tk(x.t) || {}, sh = x.side === 'short', r = x.rec;
+    const cond = CLOSE_KINDS.indexOf(r.kind) >= 0 ? (sh ? 'закрытие ниже ' : 'закрытие выше ') + fmtL(r.level) : 'до ' + zoneTxt(r.zone);
+    const dist = num(x.price) ? ' (' + pct((r.level / x.price - 1) * 100) + ')' : '';
+    const tail = x.crossed ? ' — цена за уровнем, ждём закрытия дня' : x.days_left ? ' · ещё ' + x.days_left + ' торг. дн.' : '';
+    return `<button class="lrow" data-t="${x.t}">${ava(x.t)}<div class="mid"><div class="t1">${esc(k.name || x.t)}</div>
+      <div class="t2">${x.t} · выпуск ${ddmm(r.run)}</div>
+      <div class="t3">${pill(sh ? 'swait' : 'wait')}<span class="c">${esc(cond + dist + tail)}</span></div></div>
+      <div class="right"><b>${fmtL(x.price)}</b></div></button>`;
+  }
+  function closedRow(x) {
+    const k = tk(x.t) || {}, res = num(x.result_pct);
+    const how = x.status === 't1' ? ({ t2: 'T1 и T2', breakeven: 'T1, остаток в безубыток', time: 'T1, остаток по сроку' }[x.remainder] || 'T1')
+      : x.status === 'stop' ? 'стоп' : 'выход по сроку';
+    return `<button class="lrow" data-t="${x.t}">${ava(x.t)}<div class="mid"><div class="t1">${esc(k.name || x.t)}${x.side === 'short' ? ' · шорт' : ''}</div>
+      <div class="t2">вход ${ddmm(x.entry_date)} по ${fmtL(x.entry_price)} → ${how} ${ddmm(x.exit_date)}</div></div>
+      <div class="right"><b class="${cls(res)}">${pct(res)}</b></div></button>`;
+  }
+  function dealGroups() {
+    const all = dealItems();
+    const weekAgo = new Date(Date.now() + 3 * 3600e3 - 7 * 864e5).toISOString().slice(0, 10);
+    return { open: all.filter(x => x.group === 'open'), pend: all.filter(x => x.group === 'pending'),
+             closed: all.filter(x => x.group === 'closed' && (x.exit_date || '') >= weekAgo) };
+  }
+  const dealsStamp = () => S.dealsAt ? 'по свечам Мосбиржи · ' + S.dealsAt + ' МСК, задержка 15 мин'
+    : (S.d.deals && S.d.deals.asof ? 'на ' + ddmm(S.d.deals.asof.slice(0, 10)) + ', ' + S.d.deals.asof.slice(11, 16) + ' МСК' : '');
+
   // ---------- кусочки интерфейса ----------
   const IC = {
     home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.3 12 3.6l8.5 6.7v8.9a1.4 1.4 0 0 1-1.4 1.4H15v-6.1H9v6.1H4.9a1.4 1.4 0 0 1-1.4-1.4z"/></svg>',
     stocks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 20.5h17"/><path d="m4.8 15.8 4.6-4.9 3.6 3.1 6.4-7.4"/><path d="M15.2 6.4h4.3v4.3"/></svg>',
     cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2.6"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
-    track: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="m8.3 12.2 2.6 2.6 5-5.3"/></svg>',
+    track: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="7.2" width="17" height="12.6" rx="2.4"/><path d="M8.7 7.2V5.7a1.6 1.6 0 0 1 1.6-1.6h3.4a1.6 1.6 0 0 1 1.6 1.6v1.5"/><path d="M3.5 12.6h17"/></svg>',
     more: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4.5 7h15M4.5 12h15M4.5 17h15"/></svg>',
   };
-  const TABS = [['home', 'Главная'], ['stocks', 'Акции'], ['cal', 'События'], ['track', 'Учёт'], ['more', 'Ещё']];
+  const TABS = [['home', 'Главная'], ['stocks', 'Акции'], ['track', 'Сделки'], ['cal', 'События'], ['more', 'Ещё']];
+  const mi = (ic, c, title, sub, attrs) => `<button class="mi" ${attrs}><span class="ic" style="--c:${c}">${ic}</span><span class="tx"><b>${title}</b><span>${sub}</span></span><span class="ch">›</span></button>`;
 
   const ava = (t, big) => `<div class="ava${big ? ' big' : ''}" style="--h:${hue(t)}">${esc(t.length <= 3 ? t : t.slice(0, 2))}</div>`;
   const pill = b => `<span class="pill ${b}">${B[b]}</span>`;
@@ -382,6 +504,7 @@
     <div class="kpis">${kpis()}</div>
     <div class="sec">Сигналы выпуска</div>
     <div class="tiles">${tiles().map(x => `<button class="tile ${x[0]}" data-filter-go="${x[0] === 'sgo' || x[0] === 'swait' ? 'short' : x[0]}"><b>${x[1]}</b><span>${B[x[0]]}</span></button>`).join('')}</div>
+    ${homeDeals()}
     <div class="sec">${d.short_on ? 'Лонг — покупка' : 'Сценарии'}<a data-tab="stocks">Все акции</a></div>
     ${scen.length ? scen.map(scenCard).join('') : `<div class="card"><div class="empty"><span class="e">🧘</span>Сейчас по правилам нет ни одного сценария${d.short_on ? ' на покупку' : ''} — бумаги ждут своих уровней.</div></div>`}
     ${d.short_on ? `<div class="sec">Шорт — продажа</div>${d.short_note ? `<div class="warnbox" style="margin-bottom:10px">${esc(d.short_note[0].toUpperCase() + d.short_note.slice(1))}. Шорт у брокера платный; через отсечку шорт платит дивиденд.</div>` : ''}
@@ -394,6 +517,16 @@
     <div class="sec">Новости рынка</div>
     <div class="card news">${newsLinks(d.news.slice(0, 6))}</div>
     ${foot()}`;
+  }
+
+  // Главная: открытые сделки сразу под плитками — то, о чём просил Костя
+  function homeDeals() {
+    if (!S.d.deals) return '';
+    const g = dealGroups();
+    const pend = g.pend.map(x => esc(x.t) + (x.side === 'short' ? ' (шорт)' : '')).join(', ');
+    return `<div class="sec">Открытые сделки<a data-tab="track">${g.open.length ? 'Все' : 'Подробнее'}</a></div>
+      ${g.open.length ? g.open.map(x => dealCard(x)).join('')
+        : `<div class="card tap" data-tab="track"><div class="p" style="margin:0">Открытых сделок нет: ни один сценарий не дошёл до входа.${pend ? ' Ждут входа: ' + pend + '.' : ''}</div></div>`}`;
   }
 
   function vStocks() {
@@ -453,19 +586,33 @@
     ${foot()}`;
   }
 
-  const ST = { pending: ['ждём входа', 'n'], in_position: ['в позиции', 'wait'], t1: ['дошёл до T1', 'go'], t2: ['дошёл до T2', 'go'],
-               stop: ['стоп', 'no'], time_exit: ['выход по сроку', 'n'], expired: ['вход не случился', 'n'], not_entered: ['вход не случился', 'n'] };
+  const ST = { pending: ['ждём входа', 'n'], in_position: ['в позиции', 'wait'], open: ['в позиции', 'wait'], t1: ['дошёл до T1', 'go'],
+               t2: ['дошёл до T2', 'go'], stop: ['стоп', 'no'], time_exit: ['выход по сроку', 'n'], expired: ['вход не случился', 'n'],
+               not_entered: ['вход не случился', 'n'], replaced: ['заменён выпуском', 'n'] };
 
   function vTrack() {
     const tr = S.d.track || {}, L = tr.last_30d || {}, items = tr.items || [];
     const tiles = [['Сценариев', L.signals || 0, ''], ['Был вход', L.entered || 0, ''], ['Дошли до T1', L.t1 || 0, 'up'],
                    ['Стоп', L.stop || 0, 'down'], ['По сроку', L.time_exit || 0, ''],
                    ['Средний итог', num(L.avg_result_pct_closed) !== null ? pct(L.avg_result_pct_closed) : '—', cls(L.avg_result_pct_closed)]];
+    const g = dealGroups(), stamp = dealsStamp();
     return `
-    <section class="hero"><h1>Учёт сценариев</h1><div class="sub">Сбываются ли сценарии прошлых выпусков${tr.since ? ' · с ' + ddmm(tr.since) : ''}</div></section>
-    <div class="card" style="margin-top:12px"><div class="grid">${tiles.map(x => `<div><span>${x[0]}</span><b class="${x[2]}">${x[1]}</b></div>`).join('')}</div>
+    <section class="hero"><h1>Сделки</h1><div class="sub">Открытые сделки по сценариям, что ждёт входа и как сбывались прошлые</div>
+      ${stamp ? `<div class="chips"><span class="chip">${S.dealsAt ? '<i class="dot"></i>' : ''}${esc(stamp)}</span></div>` : ''}</section>
+    <div class="sec">Открытые сделки</div>
+    ${g.open.length ? g.open.map(x => dealCard(x)).join('') : '<div class="card"><div class="empty"><span class="e">🧘</span>Открытых сделок нет — ни один сценарий не дошёл до входа</div></div>'}
+    ${g.pend.length ? `<div class="sec">Ждут входа</div><div class="card list" style="padding:0">${g.pend.map(pendRow).join('')}</div>` : ''}
+    ${g.closed.length ? `<div class="sec">Закрыты за неделю</div><div class="card list" style="padding:0">${g.closed.map(closedRow).join('')}</div>` : ''}
+    <div class="card"><div class="small">«Успеть зайти» — до какой цены вход ещё даёт прибыль/риск до T1 не хуже 1:1,5. «Докупить» — зона из плана сценария; после T1 и за стопом позицию не наращиваем. Итог — по плану (1/2 на T1), без комиссий${S.d.short_on ? '; у шорта без дивиденда' : ''}.</div></div>
+    <div class="sec">Уведомления в чат</div>
+    <div class="card menu" style="padding:0">
+      ${mi('🔔', '#22a861', 'Сообщать о сделках', 'цена дошла до входа — «пора входить» и план; T1, стоп, срок', 'data-cmd="dl_on"')}
+      ${mi('🔕', '#8a909a', 'Не сообщать', 'в чат — ничего, только этот раздел', 'data-cmd="dl_off"')}
+    </div>
+    <div class="sec">Учёт сценариев</div>
+    <div class="card"><div class="small" style="margin-bottom:8px">Сбываются ли сценарии прошлых выпусков${tr.since ? ' · с ' + ddmm(tr.since) : ''}</div><div class="grid">${tiles.map(x => `<div><span>${x[0]}</span><b class="${x[2]}">${x[1]}</b></div>`).join('')}</div>
       <div class="small" style="margin-top:10px">за 30 дней${tr.as_of ? ', свечи по ' + ddmm(tr.as_of) : ''}</div></div>
-    <div class="sec">Сценарии</div>
+    <div class="sec">Все сценарии выпусков</div>
     <div class="card list" style="padding:0">${items.length ? items.map(it => {
       const s = ST[it.status] || [it.status || '?', 'n'];
       const res = num(it.result_pct);
@@ -487,6 +634,7 @@
     ['Сила сигнала и «39/47%, n=188»', 'В 188 похожих ситуациях в прошлом T1 приходила раньше стопа в 39% случаев, стоп раньше — в 47%. Это частота прошлого, а не вероятность успеха.'],
     ['Тайм-стоп', 'Если T1 не пришла за указанное число торговых дней — сценарий устарел: выход или пересмотр.'],
     ['Докупка', 'Только пока сценарий в силе: внутри зоны входа (вход частями). Ниже зоны, ниже стопа и в сломанном тренде — не докупать.'],
+    ['Открытые сделки', 'Сценарии выпусков, по которым по правилам был вход: когда и по какой цене, итог по плану сейчас, «успеть зайти» — до какой цены прибыль/риск до T1 не хуже 1:1,5, «докупить» — зона из плана. Если вышел выпуск новее, новые деньги — по его сценарию, а открытая сделка ведётся по своему плану. Включи «Сообщать о сделках» — бот напишет «пора входить» с планом, а потом о T1, стопе и сроке.'],
     ['Рейтинг', 'Сила бумаги внутри сектора: стоимость, качество, дивиденды, импульс, мнение аналитиков, рост. Итог — 60% силы и 40% теханализа.'],
     ['Шорт', 'Те же правила зеркально: продажа у сопротивления, на отскоке вверх или после закрытия ниже поддержки; стоп выше входа, цели ниже. Шорт у брокера платный, через отсечку шорт платит дивиденд. В истории шорт по этим правилам слабее покупок — это видно в строке проверки.'],
     ['Внутри дня', 'Правило пробоя вчерашнего диапазона по часовым свечам основной сессии: вход по закрытию часа за уровнем до 17:00, выход до конца сессии. Кандидат — только если у бумаги правило давало перевес в похожих днях после комиссии; иначе это уровни для наблюдения.'],
@@ -494,7 +642,6 @@
 
   function vMore() {
     const d = S.d;
-    const mi = (ic, c, title, sub, attrs) => `<button class="mi" ${attrs}><span class="ic" style="--c:${c}">${ic}</span><span class="tx"><b>${title}</b><span>${sub}</span></span><span class="ch">›</span></button>`;
     return `
     <section class="hero"><h1>Ещё</h1><div class="sub">Действия, расписание и как читать обзор</div></section>
     <div class="sec">Действия</div>
@@ -575,6 +722,7 @@
   function vDetail(t) {
     const k = tk(t), sc = k.sc, br = k.br, ta = k.ta || {}, last = priceOf(t), chg = chgOf(t);
     const st = statusNote(k, last);
+    const myDeals = dealItems().filter(x => x.t === t && x.group === 'open');
     const ss = sk(t), shortOn = S.d.short_on && (ss.bucket === 'go' || ss.bucket === 'wait');
     const sline = shortOn ? (ss.bucket === 'go' ? `🔻 <b>Шорт по сценарию</b> — ${esc(ss.cond)}.`
       : `🔸 <b>Шорт: ждать цены</b> — ${esc(condLiveS(ss, last))}: дойдёт — сценарий продажи в силе, не дойдёт — пропускаем.`) : '';
@@ -589,6 +737,7 @@
         <div><h1>${esc(k.name)}</h1><div class="sub">${t} · ${esc(k.sector)}${k.rank ? ' · №' + k.rank + ' в рейтинге' : ''}</div></div></div>
       <div class="bigprice"><b id="dPrice">${fmt(last, k.dec)} ₽</b><span id="dChg" class="${cls(chg)}">${pct(chg, 2)} за день</span></div>
       <div class="banner ${bcls}">${banner}${k.why ? '<div style="margin-top:6px">Почему: ' + esc(k.why) + '.</div>' : ''}${st ? '<div style="margin-top:8px">' + st + '</div>' : ''}</div>
+      ${myDeals.length ? '<div class="sec">Открытая сделка</div>' + myDeals.map(x => dealCard(x, true)).join('') : ''}
       <div class="card chartcard">
         <div class="chartbar"><span class="small">Дневные свечи</span><div class="seg mini">${[[63, '3М'], [126, '6М'], [250, '1Г']].map(x => `<button data-range="${x[0]}" class="${S.range === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div></div>
         <canvas id="chart" aria-label="График ${esc(t)}"></canvas><div class="tip" id="tip"></div>
@@ -1012,4 +1161,5 @@
   }
   load();
   setInterval(() => { if (!document.hidden) fetchLive(); }, 60000);
+  setInterval(() => { if (!document.hidden) fetchDeals(); }, 180000);
 })();
