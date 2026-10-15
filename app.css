@@ -283,3 +283,9 @@ details[open] summary::after { transform: rotate(90deg); }
 .pill.aside, .pill.sno { background: var(--aside-bg); color: var(--aside); }
 .banner.sgo { background: var(--sgo-bg); --c: var(--sgo); } .banner.swait { background: var(--swait-bg); --c: var(--swait); }
 .tag.tap { cursor: pointer; }
+
+/* открытые сделки (Костя, 14.10.2026) */
+.deal .t1 .pill { margin-left: 4px; padding: 1px 7px; font-size: 11px; vertical-align: 1px; }
+.deal .dl { display: grid; gap: 4px; margin-top: 8px; font-size: 13.5px; line-height: 1.35; }
+.deal .dl .go { color: var(--go); font-weight: 600; }
+.deal .dl .no { color: var(--sub); }
