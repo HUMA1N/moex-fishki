@@ -190,7 +190,7 @@
       const bars = {};
       got.forEach(([t, b]) => { if (b && b.length) bars[t] = b; });
       if (!Object.keys(bars).length) return;
-      const fresh = window.Deals.compute(dd.recs.filter(r => bars[r.t]), bars, mskToday(), dd.ctx);
+      const fresh = window.Deals.compute(dd.recs.filter(r => bars[r.t]), bars, mskToday(), dd.ctx, dd.rules);
       S.deals = fresh.concat(exportedDeals().filter(x => !bars[x.t]));     // по бумагам без свечей — из выгрузки
       const n = new Date(Date.now() + 3 * 3600e3).toISOString();
       S.dealsAt = ddmm(n.slice(0, 10)) + ', ' + n.slice(11, 16);
@@ -509,6 +509,7 @@
     ${scen.length ? scen.map(scenCard).join('') : `<div class="card"><div class="empty"><span class="e">🧘</span>Сейчас по правилам нет ни одного сценария${d.short_on ? ' на покупку' : ''} — бумаги ждут своих уровней.</div></div>`}
     ${d.short_on ? `<div class="sec">Шорт — продажа</div>${d.short_note ? `<div class="warnbox" style="margin-bottom:10px">${esc(d.short_note[0].toUpperCase() + d.short_note.slice(1))}. Шорт у брокера платный; через отсечку шорт платит дивиденд.</div>` : ''}
       ${sscen.length ? sscen.map(scenCardS).join('') : `<div class="card"><div class="empty"><span class="e">🧘</span>Шорт-сценариев по правилам сейчас нет.</div></div>`}` : ''}
+    ${!d.short_on && d.short_off_note ? `<div class="sec">Шорт</div><div class="warnbox" style="margin-bottom:10px">${esc(d.short_off_note[0].toUpperCase() + d.short_off_note.slice(1))}.</div>` : ''}
     ${intraCard()}
     <div class="sec">Прошлые сценарии<a data-tab="track">Подробнее</a></div>
     <div class="card tap" data-tab="track">${trackMini()}</div>
@@ -603,7 +604,7 @@
     ${g.open.length ? g.open.map(x => dealCard(x)).join('') : '<div class="card"><div class="empty"><span class="e">🧘</span>Открытых сделок нет — ни один сценарий не дошёл до входа</div></div>'}
     ${g.pend.length ? `<div class="sec">Ждут входа</div><div class="card list" style="padding:0">${g.pend.map(pendRow).join('')}</div>` : ''}
     ${g.closed.length ? `<div class="sec">Закрыты за неделю</div><div class="card list" style="padding:0">${g.closed.map(closedRow).join('')}</div>` : ''}
-    <div class="card"><div class="small">«Успеть зайти» — до какой цены вход ещё даёт прибыль/риск до T1 не хуже 1:1,5. «Докупить» — зона из плана сценария; после T1 и за стопом позицию не наращиваем. Итог — по плану (1/2 на T1), без комиссий${S.d.short_on ? '; у шорта без дивиденда' : ''}.</div></div>
+    <div class="card"><div class="small">«Успеть зайти» — до какой цены вход ещё даёт прибыль/риск до T1 не хуже 1:1,5. «Докупить» — зона из плана сценария; после T1 и за стопом позицию не наращиваем. Итог — по плану (1/2 на T1), без комиссий${S.d.short_on ? '; у шорта без дивиденда' : ''}.${S.d.rules_note ? ` Правила с 21.10.2026: только покупки в «откате в восходящем тренде» и «пробое», по бумаге одна сделка за раз — ${esc(S.d.rules_note)}; это прошлое, не обещание.` : ''}</div></div>
     <div class="sec">Уведомления в чат</div>
     <div class="card menu" style="padding:0">
       ${mi('🔔', '#22a861', 'Сообщать о сделках', 'цена дошла до входа — «пора входить» и план; T1, стоп, срок', 'data-cmd="dl_on"')}
@@ -628,7 +629,7 @@
 
   const GLOSSARY = [
     ['Брать · ждать цены · не брать', 'Группы по формальным правилам рейтинга и теханализа: прибыль к риску от 1,5, стоп не дальше 12%, тренд, история похожих случаев. Это не приказ и не совет — решение за тобой.'],
-    ['Вход по сценарию', '«Брать» — сценарий в силе по текущим ценам. «Ждать цены» — сценарий заработает, если цена дойдёт до уровня за отведённые дни (откат к поддержке и разворотная свеча) или закроется выше уровня (пробой).'],
+    ['Вход по сценарию', '«Брать» — сценарий в силе по текущим ценам. «Ждать цены» — сценарий заработает, если цена дойдёт до уровня за отведённые дни (откат к поддержке — вход лимитной заявкой в зоне) или закроется выше уровня (пробой).'],
     ['Стоп', 'Закрытие дня ниже стопа — сценарий сломан: выход с убытком, без усреднения.'],
     ['T1 и T2', 'Ориентиры фиксации: половина — на T1, стоп остатка переносится в безубыток (цена входа), остаток — на T2.'],
     ['Сила сигнала и «39/47%, n=188»', 'В 188 похожих ситуациях в прошлом T1 приходила раньше стопа в 39% случаев, стоп раньше — в 47%. Это частота прошлого, а не вероятность успеха.'],
