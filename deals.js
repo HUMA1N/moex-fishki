@@ -92,7 +92,7 @@
 
   function group(e) {
     if (e.status === 'pending') return 'pending';
-    if (e.status === 'not_entered' || e.status === 'replaced') return 'dead';
+    if (e.status === 'not_entered' || e.status === 'replaced' || e.status === 'dup') return 'dead';
     if (e.status === 'open' || (e.status === 't1' && e.remainder === 'open')) return 'open';
     return 'closed';
   }
@@ -128,26 +128,49 @@
     return x;
   }
 
-  // bot/deals.py: compute — по свечам barsBy {T: [{date, open, high, low, close}]} на дату today (МСК)
-  function compute(recs, barsBy, today, ctx) {
-    const out = [];
-    (recs || []).forEach(rec => {
-      const bars = (barsBy[rec.t] || []).slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-      if (!bars.length) return;
-      const done = bars.filter(b => b.date < today);
-      const part = bars[bars.length - 1].date === today ? bars[bars.length - 1] : null;
-      const ec = evaluate(rec, done, rec.until);
-      let e = part ? evaluate(rec, done.concat([part]), rec.until) : evaluate(rec, done, rec.until);
-      let crossed = false;
-      if (part && CLOSE.indexOf(rec.kind) >= 0 && ec.status === 'pending') {
-        const beyond = rec.kind === 'close_above' ? part.close > rec.level : part.close < rec.level;
-        if (beyond && !(rec.until && part.date > rec.until)) { e = ec; crossed = true; }
-      }
-      const last = part || (done.length ? done[done.length - 1] : null);
-      const nAfter = done.filter(b => b.date > rec.asof).length + (part && part.date > rec.asof ? 1 : 0);
-      out.push(item(rec, e, last, crossed, nAfter, ctx));
+  const ddmm = iso => iso.slice(8, 10) + '.' + iso.slice(5, 7);
+
+  // track.evaluate_all: шорт, снятый отключением шорт-сделок, и «одна сделка на бумагу» (track._dup)
+  function settle(rec, e, deal, rules) {
+    if (rec.off && e.status === 'replaced') e.note = 'шорт-сделки отключены с ' + ddmm(rules.short_off_since) + ' — сценарий снят без входа';
+    const one = rules.one_deal_since && rec.run >= rules.one_deal_since && deal.rec;
+    if (one && ((e.entry_date && e.entry_date <= deal.end) || (e.status === 'pending' && deal.end === '~'))) {
+      return Object.assign({}, e, { status: 'dup', remainder: null, entry_date: null, entry_price: null, t1_date: null,
+                                    t1_days: null, exit_date: null, exit_price: null, days_in_trade: null, result_pct: null,
+                                    unrealized: false,
+                                    note: 'по бумаге уже открыта сделка по сценарию выпуска ' + ddmm(deal.rec.run) + ' — новой сделки нет' });
+    }
+    if (e.entry_date) { deal.rec = rec; deal.end = e.exit_date || '~'; }
+    return e;
+  }
+
+  // bot/deals.py: compute — по свечам barsBy {T: [{date, open, high, low, close}]} на дату today (МСК).
+  // rules — data.json → deals.rules (с какой даты одна сделка на бумагу, с какой отключён шорт)
+  function compute(recs, barsBy, today, ctx, rules) {
+    rules = rules || {};
+    const res = {}, seq = {};
+    (recs || []).forEach(rec => { (seq[rec.t + ':' + rec.side] = seq[rec.t + ':' + rec.side] || []).push(rec); });
+    Object.keys(seq).forEach(key => {
+      const rs = seq[key].slice().sort((a, b) => (a.run < b.run ? -1 : a.run > b.run ? 1 : 0));
+      const dc = {}, dl = {};
+      rs.forEach(rec => {
+        const bars = (barsBy[rec.t] || []).slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+        if (!bars.length) return;
+        const done = bars.filter(b => b.date < today);
+        const part = bars[bars.length - 1].date === today ? bars[bars.length - 1] : null;
+        const ec = settle(rec, evaluate(rec, done, rec.until), dc, rules);
+        let e = settle(rec, part ? evaluate(rec, done.concat([part]), rec.until) : evaluate(rec, done, rec.until), dl, rules);
+        let crossed = false;
+        if (part && CLOSE.indexOf(rec.kind) >= 0 && ec.status === 'pending') {
+          const beyond = rec.kind === 'close_above' ? part.close > rec.level : part.close < rec.level;
+          if (beyond && !(rec.until && part.date > rec.until)) { e = ec; crossed = true; }
+        }
+        const last = part || (done.length ? done[done.length - 1] : null);
+        const nAfter = done.filter(b => b.date > rec.asof).length + (part && part.date > rec.asof ? 1 : 0);
+        res[rec.id] = item(rec, e, last, crossed, nAfter, ctx);
+      });
     });
-    return out;
+    return (recs || []).map(rec => res[rec.id]).filter(Boolean);
   }
 
   const api = { evaluate, compute, group, item, limitOf };
